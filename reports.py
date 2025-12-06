@@ -34,7 +34,7 @@ async def send_daily_reports(bot: Bot):
 
     if df.empty:
         for admin in admins:
-            await bot.send_message(admin[0], f"📅 Отчет за {today}: Заказов нет.")
+            await bot.send_message(admin, f"📅 Отчет за {today}: Заказов нет.")
         return
 
     for rest_name in df['Ресторан'].unique():
@@ -47,5 +47,5 @@ async def send_daily_reports(bot: Bot):
         caption = f"📄 Заказ для **{rest_name}** на {today}.\nИтого сумма: {total_sum} руб."
         for admin in admins:
             file = FSInputFile(filename)
-            await bot.send_document(admin[0], file, caption=caption, parse_mode="Markdown")
+            await bot.send_document(admin, file, caption=caption, parse_mode="Markdown")
         os.remove(filename)
