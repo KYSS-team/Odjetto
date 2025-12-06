@@ -10,8 +10,8 @@ from db import get_db
 
 async def send_daily_reports(bot: Bot):
     with get_db() as conn:
-        admin = conn.execute("SELECT tg_id FROM users WHERE role='manager' LIMIT 1").fetchone()
-        if not admin:
+        admins = conn.execute("SELECT tg_id FROM users WHERE role='manager' AND tg_id IS NOT NULL").fetchall()
+        if not admins:
             return
 
         today = datetime.now().strftime("%Y-%m-%d")
@@ -30,7 +30,8 @@ async def send_daily_reports(bot: Bot):
         )
 
     if df.empty:
-        await bot.send_message(admin[0], f"📅 Отчет за {today}: Заказов нет.")
+        for admin in admins:
+            await bot.send_message(admin[0], f"📅 Отчет за {today}: Заказов нет.")
         return
 
     for rest_name in df['Ресторан'].unique():
@@ -41,6 +42,7 @@ async def send_daily_reports(bot: Bot):
         rest_df.to_excel(filename, index=False)
 
         caption = f"📄 Заказ для **{rest_name}** на {today}.\nИтого сумма: {total_sum} руб."
-        file = FSInputFile(filename)
-        await bot.send_document(admin[0], file, caption=caption, parse_mode="Markdown")
+        for admin in admins:
+            file = FSInputFile(filename)
+            await bot.send_document(admin[0], file, caption=caption, parse_mode="Markdown")
         os.remove(filename)
