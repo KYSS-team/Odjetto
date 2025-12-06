@@ -1,8 +1,9 @@
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from sqlalchemy import delete, select
 
-from db import get_db, get_limit, set_limit
+from db import MenuItem, Order, Restaurant, User, get_limit, get_session, set_limit
 from keyboards import kb_cancel, kb_manager
 from reports import send_daily_reports
 from states import ManagerStates
@@ -63,8 +64,8 @@ async def m_add_emp_office(message: types.Message, state: FSMContext):
         return await m_cancel_reply(message, state)
 
     await state.update_data(name=message.text)
-    with get_db() as conn:
-        offices = conn.execute("SELECT DISTINCT office FROM users WHERE office IS NOT NULL").fetchall()
+    with get_session() as session:
+        offices = session.execute(select(User.office).where(User.office.is_not(None)).distinct()).all()
 
     buttons = [[KeyboardButton(text=row[0])] for row in offices]
     kb_reply = ReplyKeyboardMarkup(
@@ -81,11 +82,9 @@ async def m_add_emp_finish(message: types.Message, state: FSMContext):
 
     data = await state.get_data()
     token = generate_token()
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO users (full_name, office, auth_token) VALUES (?, ?, ?)", (data["name"], message.text, token)
-        )
-        conn.commit()
+    with get_session() as session:
+        session.add(User(full_name=data["name"], office=message.text, auth_token=token))
+        session.commit()
 
     await message.answer(
         f"✅ Сотрудник создан!\nФИО: {data['name']}\nОфис: {message.text}\n🔑 Код доступа: `{token}`",
@@ -105,17 +104,19 @@ async def m_search_emp_start(cb: types.CallbackQuery, state: FSMContext):
 @router.message(ManagerStates.emp_search)
 async def m_search_emp_process(message: types.Message, state: FSMContext):
     search_term = f"%{message.text}%"
-    with get_db() as conn:
-        users = conn.execute(
-            "SELECT id, full_name, office FROM users WHERE full_name LIKE ? AND role='employee'", (search_term,)
-        ).fetchall()
+    with get_session() as session:
+        users = session.execute(
+            select(User.id, User.full_name, User.office).where(User.full_name.like(search_term), User.role == "employee")
+        ).all()
 
     if not users:
         await message.answer("Сотрудники не найдены. Попробуйте снова или нажмите 'Отмена'.", reply_markup=kb_cancel())
         return
 
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=f"{u['full_name']} ({u['office']})", callback_data=f"emp_id_{u['id']}")] for u in users]
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"{u.full_name} ({u.office})", callback_data=f"emp_id_{u.id}")] for u in users
+        ]
     )
     await message.answer("Выберите сотрудника для действий:", reply_markup=kb)
     await state.set_state(ManagerStates.emp_action_select)
@@ -124,8 +125,8 @@ async def m_search_emp_process(message: types.Message, state: FSMContext):
 @router.callback_query(F.data.startswith("emp_id_"))
 async def m_emp_action_select(cb: types.CallbackQuery, state: FSMContext):
     user_id = int(cb.data.split("_")[2])
-    with get_db() as conn:
-        user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    with get_session() as session:
+        user = session.get(User, user_id)
 
     await state.update_data(target_user_id=user_id, original_message_id=cb.message.message_id)
     kb = InlineKeyboardMarkup(
@@ -135,9 +136,9 @@ async def m_emp_action_select(cb: types.CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="🔙 Назад к поиску", callback_data="search_emp_start")],
         ]
     )
-    status = "Связан с Telegram ID" if user["tg_id"] else f"Ожидает активации (Токен: {user['auth_token']})"
+    status = "Связан с Telegram ID" if user.tg_id else f"Ожидает активации (Токен: {user.auth_token})"
     await cb.message.edit_text(
-        f"Выбран: {user['full_name']} ({user['office']})\nБаланс: {user['balance']} руб.\nСтатус: {status}",
+        f"Выбран: {user.full_name} ({user.office})\nБаланс: {user.balance} руб.\nСтатус: {status}",
         reply_markup=kb,
     )
     await cb.answer()
@@ -146,10 +147,10 @@ async def m_emp_action_select(cb: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "emp_edit")
 async def m_emp_edit_start(cb: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    with get_db() as conn:
-        user = conn.execute("SELECT full_name, office FROM users WHERE id=?", (data["target_user_id"],)).fetchone()
+    with get_session() as session:
+        user = session.get(User, data["target_user_id"])
 
-    await cb.message.edit_text(f"Текущее ФИО: {user['full_name']}. Введите новое:", reply_markup=kb_cancel())
+    await cb.message.edit_text(f"Текущее ФИО: {user.full_name}. Введите новое:", reply_markup=kb_cancel())
     await state.set_state(ManagerStates.emp_edit_name)
     await cb.answer()
 
@@ -161,10 +162,10 @@ async def m_emp_edit_name(message: types.Message, state: FSMContext):
 
     await state.update_data(new_name=message.text)
     data = await state.get_data()
-    with get_db() as conn:
-        user = conn.execute("SELECT office FROM users WHERE id=?", (data["target_user_id"],)).fetchone()
+    with get_session() as session:
+        user = session.get(User, data["target_user_id"])
 
-    await message.answer(f"Текущий офис: {user['office']}. Введите новый:", reply_markup=kb_cancel())
+    await message.answer(f"Текущий офис: {user.office}. Введите новый:", reply_markup=kb_cancel())
     await state.set_state(ManagerStates.emp_edit_office)
 
 
@@ -174,9 +175,12 @@ async def m_emp_edit_finish(message: types.Message, state: FSMContext):
         return await m_cancel_reply(message, state)
 
     data = await state.get_data()
-    with get_db() as conn:
-        conn.execute("UPDATE users SET full_name=?, office=? WHERE id=?", (data["new_name"], message.text, data["target_user_id"]))
-        conn.commit()
+    with get_session() as session:
+        user = session.get(User, data["target_user_id"])
+        if user:
+            user.full_name = data["new_name"]
+            user.office = message.text
+            session.commit()
 
     await message.answer(f"✅ Сотрудник {data['new_name']} обновлен.", reply_markup=kb_manager())
     await state.clear()
@@ -198,10 +202,12 @@ async def m_emp_delete_confirm(cb: types.CallbackQuery):
 async def m_emp_delete_execute(cb: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     user_id = data["target_user_id"]
-    with get_db() as conn:
-        conn.execute("DELETE FROM orders WHERE user_id=?", (user_id,))
-        conn.execute("DELETE FROM users WHERE id=?", (user_id,))
-        conn.commit()
+    with get_session() as session:
+        session.execute(delete(Order).where(Order.user_id == user_id))
+        user = session.get(User, user_id)
+        if user:
+            session.delete(user)
+        session.commit()
 
     await cb.message.edit_text("✅ Сотрудник и все его заказы удалены.", reply_markup=None)
     await cb.message.answer("Выберите действие:", reply_markup=kb_manager())
@@ -232,9 +238,9 @@ async def m_save_rest(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         return await m_cancel_reply(message, state)
 
-    with get_db() as conn:
-        conn.execute("INSERT INTO restaurants (name) VALUES (?)", (message.text,))
-        conn.commit()
+    with get_session() as session:
+        session.add(Restaurant(name=message.text))
+        session.commit()
 
     await message.answer(f"Ресторан '{message.text}' добавлен.", reply_markup=kb_manager())
     await state.clear()
@@ -242,8 +248,8 @@ async def m_save_rest(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "list_rest")
 async def m_list_rest(cb: types.CallbackQuery, state: FSMContext):
-    with get_db() as conn:
-        rests = conn.execute("SELECT id, name FROM restaurants").fetchall()
+    with get_session() as session:
+        rests = session.execute(select(Restaurant.id, Restaurant.name)).all()
 
     if not rests:
         await cb.message.edit_text("Пока нет ни одного ресторана.", reply_markup=None)
@@ -252,7 +258,7 @@ async def m_list_rest(cb: types.CallbackQuery, state: FSMContext):
         return
 
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=r["name"], callback_data=f"rest_edit_{r['id']}")] for r in rests]
+        inline_keyboard=[[InlineKeyboardButton(text=r.name, callback_data=f"rest_edit_{r.id}")] for r in rests]
     )
     await cb.message.edit_text("Выберите ресторан для редактирования:", reply_markup=kb)
     await state.set_state(ManagerStates.rest_action_select)
@@ -261,11 +267,13 @@ async def m_list_rest(cb: types.CallbackQuery, state: FSMContext):
 
 
 async def _render_restaurant_actions(message: types.Message, rest_id: int, state: FSMContext):
-    with get_db() as conn:
-        dishes = conn.execute("SELECT id, name, price FROM menu WHERE restaurant_id=?", (rest_id,)).fetchall()
-        rest = conn.execute("SELECT name FROM restaurants WHERE id=?", (rest_id,)).fetchone()
+    with get_session() as session:
+        dishes = session.execute(
+            select(MenuItem.id, MenuItem.name, MenuItem.price).where(MenuItem.restaurant_id == rest_id)
+        ).all()
+        rest = session.get(Restaurant, rest_id)
 
-    dishes_txt = "\n".join([f"- {d['name']} ({d['price']}р)" for d in dishes]) or "Меню пустое"
+    dishes_txt = "\n".join([f"- {d.name} ({d.price}р)" for d in dishes]) or "Меню пустое"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="➕ Добавить блюдо", callback_data="dish_add")],
@@ -275,7 +283,7 @@ async def _render_restaurant_actions(message: types.Message, rest_id: int, state
         ]
     )
     await state.update_data(target_rest_id=rest_id)
-    await message.edit_text(f"Ресторан: {rest['name']}\nМеню:\n{dishes_txt}", reply_markup=kb)
+    await message.edit_text(f"Ресторан: {rest.name}\nМеню:\n{dishes_txt}", reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("rest_edit_"))
@@ -319,12 +327,16 @@ async def m_dish_save(message: types.Message, state: FSMContext):
         return
 
     data = await state.get_data()
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO menu (restaurant_id, name, description, price) VALUES (?, ?, ?, ?)",
-            (data["target_rest_id"], data["dish_name"], data["dish_desc"], int(message.text)),
+    with get_session() as session:
+        session.add(
+            MenuItem(
+                restaurant_id=data["target_rest_id"],
+                name=data["dish_name"],
+                description=data["dish_desc"],
+                price=int(message.text),
+            )
         )
-        conn.commit()
+        session.commit()
 
     await message.answer("Блюдо добавлено.", reply_markup=kb_manager())
     await state.clear()
@@ -334,15 +346,15 @@ async def m_dish_save(message: types.Message, state: FSMContext):
 async def m_dish_delete_ask(cb: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     rest_id = data.get("target_rest_id")
-    with get_db() as conn:
-        dishes = conn.execute("SELECT id, name FROM menu WHERE restaurant_id=?", (rest_id,)).fetchall()
+    with get_session() as session:
+        dishes = session.execute(select(MenuItem.id, MenuItem.name).where(MenuItem.restaurant_id == rest_id)).all()
 
     if not dishes:
         await cb.answer("В меню нет блюд", show_alert=True)
         return
 
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=d["name"], callback_data=f"dish_del_{d['id']}")] for d in dishes]
+        inline_keyboard=[[InlineKeyboardButton(text=d.name, callback_data=f"dish_del_{d.id}")] for d in dishes]
     )
     await cb.message.edit_text("Выберите блюдо для удаления:", reply_markup=kb)
     await state.set_state(ManagerStates.dish_id_to_delete)
@@ -352,9 +364,11 @@ async def m_dish_delete_ask(cb: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("dish_del_"), ManagerStates.dish_id_to_delete)
 async def m_dish_delete(cb: types.CallbackQuery, state: FSMContext):
     dish_id = int(cb.data.split("_")[2])
-    with get_db() as conn:
-        conn.execute("DELETE FROM menu WHERE id=?", (dish_id,))
-        conn.commit()
+    with get_session() as session:
+        dish = session.get(MenuItem, dish_id)
+        if dish:
+            session.delete(dish)
+            session.commit()
 
     await cb.message.edit_text("Блюдо удалено.", reply_markup=None)
     await cb.message.answer("Возврат в меню ресторана", reply_markup=kb_manager())
@@ -383,9 +397,13 @@ async def m_delete_rest_confirm(cb: types.CallbackQuery, state: FSMContext):
 async def m_delete_rest_execute(cb: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     rest_id = data["target_rest_id"]
-    with get_db() as conn:
-        conn.execute("DELETE FROM restaurants WHERE id=?", (rest_id,))
-        conn.commit()
+    with get_session() as session:
+        session.execute(delete(Order).where(Order.restaurant_id == rest_id))
+        session.execute(delete(MenuItem).where(MenuItem.restaurant_id == rest_id))
+        rest = session.get(Restaurant, rest_id)
+        if rest:
+            session.delete(rest)
+        session.commit()
 
     await cb.message.edit_text("✅ Ресторан, его меню и все связанные заказы удалены.", reply_markup=None)
     await cb.message.answer("Выберите действие:", reply_markup=kb_manager())

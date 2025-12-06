@@ -4,18 +4,20 @@ from datetime import datetime
 import pandas as pd
 from aiogram import Bot
 from aiogram.types import FSInputFile
+from sqlalchemy import select, text
 
-from db import get_db
+from db import User, engine, get_session
 
 
 async def send_daily_reports(bot: Bot):
-    with get_db() as conn:
-        admins = conn.execute("SELECT tg_id FROM users WHERE role='manager' AND tg_id IS NOT NULL").fetchall()
+    with get_session() as session:
+        admins = session.scalars(select(User.tg_id).where(User.role == "manager", User.tg_id.is_not(None))).all()
         if not admins:
             return
 
-        today = datetime.now().strftime("%Y-%m-%d")
-        df = pd.read_sql_query(
+    today = datetime.now().strftime("%Y-%m-%d")
+    df = pd.read_sql_query(
+        text(
             '''SELECT r.name as Ресторан,
                       u.full_name as ФИО,
                       u.office as Офис,
@@ -24,10 +26,11 @@ async def send_daily_reports(bot: Bot):
                FROM orders o
                JOIN users u ON o.user_id = u.id
                JOIN restaurants r ON o.restaurant_id = r.id
-               WHERE o.order_date = ?''',
-            conn,
-            params=(today,),
-        )
+               WHERE o.order_date = :today'''
+        ),
+        engine,
+        params={"today": today},
+    )
 
     if df.empty:
         for admin in admins:

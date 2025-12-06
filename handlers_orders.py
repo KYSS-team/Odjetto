@@ -3,9 +3,10 @@ from datetime import datetime
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy import delete, select
 
 from config import ORDER_DEADLINE_HOUR, PAYMENT_PLACEHOLDER_MESSAGE, REFUND_PLACEHOLDER_MESSAGE
-from db import get_db, get_limit, today_str
+from db import MenuItem, Order, Restaurant, User, get_limit, get_session, today_str
 from keyboards import kb_employee
 from states import OrderStates
 from utils import available_dates, deadline_passed
@@ -19,43 +20,41 @@ def _order_summary(cart):
 
 @router.message(F.text == "👤 Мой профиль / Баланс")
 async def e_profile(message: types.Message):
-    with get_db() as conn:
-        user = conn.execute("SELECT id, full_name, balance FROM users WHERE tg_id=?", (message.from_user.id,)).fetchone()
+    with get_session() as session:
+        user = session.scalars(select(User).where(User.tg_id == message.from_user.id)).first()
+        if not user:
+            await message.answer("Учетная запись не найдена. Отправьте /start для входа.")
+            return
         today = today_str()
         current_limit = get_limit()
-        order_today = conn.execute(
-            "SELECT total_price FROM orders WHERE user_id=? AND order_date=?", (user["id"], today)
-        ).fetchone()
-        future_orders = conn.execute(
-            '''SELECT o.order_date, r.name, o.total_price
-               FROM orders o
-               JOIN restaurants r ON o.restaurant_id = r.id
-               WHERE user_id = ? AND order_date > ?
-               ORDER BY order_date''',
-            (user["id"], today),
-        ).fetchall()
+        order_today_total = session.scalars(
+            select(Order.total_price).where(Order.user_id == user.id, Order.order_date == today)
+        ).first()
+        future_orders = session.execute(
+            select(Order.order_date, Restaurant.name, Order.total_price)
+            .join(Restaurant, Order.restaurant_id == Restaurant.id)
+            .where(Order.user_id == user.id, Order.order_date > today)
+            .order_by(Order.order_date)
+        ).all()
 
-    if order_today:
-        daily_status = f"✅ Заказ на сегодня ({order_today['total_price']} руб.) уже оформлен."
+    if order_today_total is not None:
+        daily_status = f"✅ Заказ на сегодня ({order_today_total} руб.) уже оформлен."
     elif datetime.now().hour >= ORDER_DEADLINE_HOUR:
         daily_status = f"❌ Заказ на сегодня уже недоступен (дедлайн {ORDER_DEADLINE_HOUR}:00)."
     else:
         daily_status = f"✅ Сегодня до {ORDER_DEADLINE_HOUR}:00 доступен лимит *{current_limit} руб.*"
 
-    order_txt = "\n".join(
-        [f"📅 {o['order_date']}: {o['name']} ({o['total_price']}р)" for o in future_orders]
-    ) or "Нет заказов на будущее"
+    order_txt = "\n".join([f"📅 {o.order_date}: {o.name} ({o.total_price}р)" for o in future_orders]) or "Нет заказов на будущее"
 
     await message.answer(
-        f"👤 *{user['full_name']}*\n"
-        f"💰 Личный Баланс (переплаты/возвраты): *{user['balance']} руб.*\n"
-        f"--- Дневной лимит ({current_limit} руб.) ---\n"
-        f"{daily_status}\n\n"
+        f"👤 *{user.full_name}*\n",
+        f"💰 Личный Баланс (переплаты/возвраты): *{user.balance} руб.*\n",
+        f"--- Дневной лимит ({current_limit} руб.) ---\n",
+        f"{daily_status}\n\n",
         f"📋 Заказы на будущее:\n{order_txt}",
         parse_mode="Markdown",
         reply_markup=kb_employee(),
     )
-
 
 @router.message(F.text == "🍱 Сделать заказ")
 async def e_order_start(message: types.Message, state: FSMContext):
@@ -78,25 +77,24 @@ async def e_date_sel(cb: types.CallbackQuery, state: FSMContext):
         await cb.answer("Дедлайн для этой даты истек", show_alert=True)
         return
 
-    with get_db() as conn:
-        user = conn.execute("SELECT id, balance FROM users WHERE tg_id=?", (cb.from_user.id,)).fetchone()
+    with get_session() as session:
+        user = session.scalars(select(User).where(User.tg_id == cb.from_user.id)).first()
         if not user:
             await cb.message.answer("Учетная запись не найдена. Отправьте /start для входа.")
             await state.clear()
             await cb.answer()
             return
-        existing = conn.execute(
-            "SELECT id, paid_extra FROM orders WHERE user_id=? AND order_date=?",
-            (user["id"], date_str),
-        ).fetchone()
-        rests = conn.execute("SELECT id, name FROM restaurants").fetchall()
+        existing = session.execute(
+            select(Order.id, Order.paid_extra).where(Order.user_id == user.id, Order.order_date == date_str)
+        ).first()
+        rests = session.execute(select(Restaurant.id, Restaurant.name)).all()
 
-    refund_potential = existing["paid_extra"] if existing else 0
+    refund_potential = existing.paid_extra if existing else 0
     await state.update_data(
         date=date_str,
-        user_db_id=user["id"],
-        user_balance=user["balance"],
-        existing_order_id=existing["id"] if existing else None,
+        user_db_id=user.id,
+        user_balance=user.balance,
+        existing_order_id=existing.id if existing else None,
         refund_potential=refund_potential,
         cart=[],
         cart_total=0,
@@ -107,7 +105,7 @@ async def e_date_sel(cb: types.CallbackQuery, state: FSMContext):
         msg_text += f"\n⚠️ У вас уже есть заказ. При изменении {refund_potential} руб. вернутся на баланс."
 
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=r["name"], callback_data=f"rest_{r['id']}")] for r in rests]
+        inline_keyboard=[[InlineKeyboardButton(text=r.name, callback_data=f"rest_{r.id}")] for r in rests]
     )
     await cb.message.edit_text(f"{msg_text}\nВыберите ресторан:", reply_markup=kb)
     await state.set_state(OrderStates.choose_rest)
@@ -128,8 +126,8 @@ async def e_rest_sel(cb: types.CallbackQuery, state: FSMContext):
 
 
 async def render_menu(message: types.Message, rest_id: int, state: FSMContext):
-    with get_db() as conn:
-        items = conn.execute("SELECT id, name, price FROM menu WHERE restaurant_id=?", (rest_id,)).fetchall()
+    with get_session() as session:
+        items = session.execute(select(MenuItem.id, MenuItem.name, MenuItem.price).where(MenuItem.restaurant_id == rest_id)).all()
 
     data = await state.get_data()
     cart_txt = _order_summary(data["cart"])
@@ -138,8 +136,8 @@ async def render_menu(message: types.Message, rest_id: int, state: FSMContext):
     kb_rows = [
         [
             InlineKeyboardButton(
-                text=f"{item['name']} - {item['price']}р",
-                callback_data=f"add_{item['id']}_{item['price']}_{item['name']}",
+                text=f"{item.name} - {item.price}р",
+                callback_data=f"add_{item.id}_{item.price}_{item.name}",
             )
         ]
         for item in items
@@ -174,10 +172,10 @@ async def e_menu_actions(cb: types.CallbackQuery, state: FSMContext):
         await render_menu(cb.message, data["rest_id"], state)
         await cb.answer("Корзина очищена")
     elif action == "back":
-        with get_db() as conn:
-            rests = conn.execute("SELECT id, name FROM restaurants").fetchall()
+        with get_session() as session:
+            rests = session.execute(select(Restaurant.id, Restaurant.name)).all()
         kb = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text=r["name"], callback_data=f"rest_{r['id']}")] for r in rests]
+            inline_keyboard=[[InlineKeyboardButton(text=r.name, callback_data=f"rest_{r.id}")] for r in rests]
         )
         await cb.message.edit_text("Выберите ресторан:", reply_markup=kb)
         await state.set_state(OrderStates.choose_rest)
@@ -238,9 +236,9 @@ async def e_finish(cb: types.CallbackQuery, state: FSMContext):
         await cb.answer()
         return
 
-    with get_db() as conn:
+    with get_session() as session:
         if data["existing_order_id"]:
-            conn.execute("DELETE FROM orders WHERE id=?", (data["existing_order_id"],))
+            session.execute(delete(Order).where(Order.id == data["existing_order_id"]))
 
         limit = get_limit()
         total = data["cart_total"]
@@ -256,14 +254,21 @@ async def e_finish(cb: types.CallbackQuery, state: FSMContext):
             real_payment = 0
             msg_extra = f"Списано с баланса. Остаток: {new_balance} руб."
 
-        conn.execute("UPDATE users SET balance = ? WHERE id = ?", (new_balance, data["user_db_id"]))
+        user = session.get(User, data["user_db_id"])
+        if user:
+            user.balance = new_balance
         items_str = ", ".join([i["name"] for i in data["cart"]])
-        conn.execute(
-            '''INSERT INTO orders (user_id, restaurant_id, order_date, items_json, total_price, paid_extra)
-               VALUES (?, ?, ?, ?, ?, ?)''',
-            (data["user_db_id"], data["rest_id"], data["date"], items_str, total, need_to_pay_total),
+        session.add(
+            Order(
+                user_id=data["user_db_id"],
+                restaurant_id=data["rest_id"],
+                order_date=data["date"],
+                items_json=items_str,
+                total_price=total,
+                paid_extra=need_to_pay_total,
+            )
         )
-        conn.commit()
+        session.commit()
 
     if data.get("refund_potential"):
         await cb.message.answer(REFUND_PLACEHOLDER_MESSAGE.format(amount=data["refund_potential"]))
