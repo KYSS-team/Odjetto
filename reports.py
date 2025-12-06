@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 from aiogram import Bot
@@ -52,5 +52,12 @@ async def send_reports_for_date(bot: Bot, target_date: str | None = None):
     os.remove(filename)
 
 
+def _remaining_week_dates(now: datetime) -> list[str]:
+    days_left = 6 - now.weekday()
+    return [(now + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days_left + 1)]
+
+
 async def send_daily_reports(bot: Bot):
-    await send_reports_for_date(bot)
+    now = datetime.now()
+    for date_str in _remaining_week_dates(now):
+        await send_reports_for_date(bot, date_str)
