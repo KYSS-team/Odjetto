@@ -152,7 +152,7 @@ async def render_menu(message: types.Message, rest_id: int, state: FSMContext):
     await state.set_state(OrderStates.choose_dish)
 
 
-@router.callback_query(OrderStates.choose_dish)
+@router.callback_query(OrderStates.choose_dish, F.data.startswith(("add_", "clear_", "back_", "checkout")))
 async def e_menu_actions(cb: types.CallbackQuery, state: FSMContext):
     action = cb.data.split("_")[0]
     data = await state.get_data()
@@ -214,15 +214,16 @@ async def process_checkout(message: types.Message, state: FSMContext):
 
     await state.update_data(pay_real_money=pay_real_money, pay_from_balance=pay_from_balance)
     await message.edit_text(txt, parse_mode="Markdown", reply_markup=kb)
+    await state.set_state(OrderStates.checkout)
 
 
-@router.callback_query(F.data == "topup_balance")
+@router.callback_query(OrderStates.checkout, F.data == "topup_balance")
 async def e_topup_placeholder(cb: types.CallbackQuery):
     await cb.message.answer(PAYMENT_PLACEHOLDER_MESSAGE)
     await cb.answer()
 
 
-@router.callback_query(F.data == "finish_order")
+@router.callback_query(OrderStates.checkout, F.data == "finish_order")
 async def e_finish(cb: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     now = datetime.now()
@@ -267,7 +268,7 @@ async def e_finish(cb: types.CallbackQuery, state: FSMContext):
     await cb.answer()
 
 
-@router.callback_query(F.data == "cancel_order")
+@router.callback_query(OrderStates.checkout, F.data == "cancel_order")
 async def e_cancel(cb: types.CallbackQuery, state: FSMContext):
     await cb.message.edit_text("Оформление заказа отменено.")
     await state.clear()
