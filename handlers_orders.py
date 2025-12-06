@@ -44,17 +44,20 @@ async def e_profile(message: types.Message):
     else:
         daily_status = f"✅ Сегодня до {ORDER_DEADLINE_HOUR}:00 доступен лимит *{current_limit} руб.*"
 
-    order_txt = "\n".join([f"📅 {o.order_date}: {o.name} ({o.total_price}р)" for o in future_orders]) or "Нет заказов на будущее"
-
-    await message.answer(
-        f"👤 *{user.full_name}*\n",
-        f"💰 Личный Баланс (переплаты/возвраты): *{user.balance} руб.*\n",
-        f"--- Дневной лимит ({current_limit} руб.) ---\n",
-        f"{daily_status}\n\n",
-        f"📋 Заказы на будущее:\n{order_txt}",
-        parse_mode="Markdown",
-        reply_markup=kb_employee(),
+    order_txt = (
+        "\n".join([f"📅 {o.order_date}: {o.name} ({o.total_price}р)" for o in future_orders])
+        or "Нет заказов на будущее"
     )
+
+    profile_text = (
+        f"👤 *{user.full_name}*\n"
+        f"💰 Личный Баланс (переплаты/возвраты): *{user.balance} руб.*\n"
+        f"--- Дневной лимит ({current_limit} руб.) ---\n"
+        f"{daily_status}\n\n"
+        f"📋 Заказы на будущее:\n{order_txt}"
+    )
+
+    await message.answer(profile_text, parse_mode="Markdown", reply_markup=kb_employee())
 
 @router.message(F.text == "🍱 Сделать заказ")
 async def e_order_start(message: types.Message, state: FSMContext):
