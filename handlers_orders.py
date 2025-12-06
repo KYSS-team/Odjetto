@@ -224,8 +224,12 @@ async def process_checkout(message: types.Message, state: FSMContext):
 
 
 @router.callback_query(OrderStates.checkout, F.data == "topup_balance")
-async def e_topup_placeholder(cb: types.CallbackQuery):
-    await cb.message.answer(PAYMENT_PLACEHOLDER_MESSAGE)
+async def e_topup_placeholder(cb: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    amount = data.get("pay_real_money", 0)
+    msg = f"К оплате: {amount} руб.\n{PAYMENT_PLACEHOLDER_MESSAGE}" if amount else PAYMENT_PLACEHOLDER_MESSAGE
+
+    await cb.message.answer(msg)
     await cb.answer()
 
 
