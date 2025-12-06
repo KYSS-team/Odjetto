@@ -80,6 +80,11 @@ async def e_date_sel(cb: types.CallbackQuery, state: FSMContext):
 
     with get_db() as conn:
         user = conn.execute("SELECT id, balance FROM users WHERE tg_id=?", (cb.from_user.id,)).fetchone()
+        if not user:
+            await cb.message.answer("Учетная запись не найдена. Отправьте /start для входа.")
+            await state.clear()
+            await cb.answer()
+            return
         existing = conn.execute(
             "SELECT id, paid_extra FROM orders WHERE user_id=? AND order_date=?",
             (user["id"], date_str),
