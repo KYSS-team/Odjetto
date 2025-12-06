@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from config import ORDER_DEADLINE_HOUR, PAYMENT_PLACEHOLDER_MESSAGE, REFUND_PLACEHOLDER_MESSAGE
 from db import MenuItem, Order, Restaurant, User, get_limit, get_session, today_str
 from keyboards import kb_employee
+from reports import send_reports_for_date
 from states import OrderStates
 from utils import available_dates, deadline_passed
 
@@ -194,7 +195,9 @@ async def process_checkout(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    limit = get_limit()
+    target_date = datetime.strptime(data["date"], "%Y-%m-%d").date()
+    is_future_order = target_date > now.date()
+    limit = 0 if is_future_order else get_limit()
     total = data["cart_total"]
     covered_by_firm = min(total, limit)
     need_to_pay = max(0, total - limit)
@@ -210,15 +213,21 @@ async def process_checkout(message: types.Message, state: FSMContext):
         ]
     )
 
+    note = "\n\n⚠️ Заказы на будущие даты оплачиваются полностью за ваш счет." if is_future_order else ""
     txt = (
         f"🧾 **Итого:** {total} руб.\n"
         f"🏢 Фирма платит: {covered_by_firm} руб.\n"
-        f"👤 Ваш вклад: {need_to_pay} руб.\n\n"
+        f"👤 Ваш вклад: {need_to_pay} руб.{note}\n\n"
         f"💳 С вашего баланса: {pay_from_balance} руб.\n"
         f"💸 **К доплате (заглушка): {pay_real_money} руб.**"
     )
 
-    await state.update_data(pay_real_money=pay_real_money, pay_from_balance=pay_from_balance)
+    await state.update_data(
+        pay_real_money=pay_real_money,
+        pay_from_balance=pay_from_balance,
+        limit_for_order=limit,
+        is_future_order=is_future_order,
+    )
     await message.edit_text(txt, parse_mode="Markdown", reply_markup=kb)
     await state.set_state(OrderStates.checkout)
 
@@ -247,7 +256,7 @@ async def e_finish(cb: types.CallbackQuery, state: FSMContext):
         if data["existing_order_id"]:
             session.execute(delete(Order).where(Order.id == data["existing_order_id"]))
 
-        limit = get_limit()
+        limit = data.get("limit_for_order", get_limit())
         total = data["cart_total"]
         need_to_pay_total = max(0, total - limit)
         avail_balance = data["user_balance"] + data["refund_potential"]
@@ -276,6 +285,8 @@ async def e_finish(cb: types.CallbackQuery, state: FSMContext):
             )
         )
         session.commit()
+
+    await send_reports_for_date(cb.message.bot, data["date"])
 
     if data.get("refund_potential"):
         await cb.message.answer(REFUND_PLACEHOLDER_MESSAGE.format(amount=data["refund_potential"]))
