@@ -18,7 +18,6 @@ class ManagerStates(StatesGroup):
     rest_action_select = State()
     rest_delete_confirm = State()
     dish_name = State()
-    dish_desc = State()
     dish_price = State()
     dish_id_to_delete = State()
 

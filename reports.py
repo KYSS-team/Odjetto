@@ -37,15 +37,16 @@ async def send_daily_reports(bot: Bot):
             await bot.send_message(admin, f"📅 Отчет за {today}: Заказов нет.")
         return
 
-    for rest_name in df['Ресторан'].unique():
-        rest_df = df[df['Ресторан'] == rest_name]
-        total_sum = rest_df['Сумма'].sum()
+    df = df.sort_values(["Ресторан", "ФИО"])
+    totals = df.groupby("Ресторан")["Сумма"].sum()
 
-        filename = f"Заказ_{rest_name}_{today}.xlsx"
-        rest_df.to_excel(filename, index=False)
+    filename = f"Заказы_{today}.xlsx"
+    df.to_excel(filename, index=False)
 
-        caption = f"📄 Заказ для **{rest_name}** на {today}.\nИтого сумма: {total_sum} руб."
-        for admin in admins:
-            file = FSInputFile(filename)
-            await bot.send_document(admin, file, caption=caption, parse_mode="Markdown")
-        os.remove(filename)
+    totals_txt = "\n".join([f"- {rest}: {int(amount)} руб." for rest, amount in totals.items()])
+    caption = f"📄 Заказы на {today}.\nСумма по заведениям:\n{totals_txt}"
+
+    for admin in admins:
+        file = FSInputFile(filename)
+        await bot.send_document(admin, file, caption=caption, parse_mode="Markdown")
+    os.remove(filename)

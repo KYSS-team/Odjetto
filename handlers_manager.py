@@ -47,7 +47,6 @@ async def m_add_emp_start(cb: types.CallbackQuery, state: FSMContext):
             ManagerStates.emp_edit_name,
             ManagerStates.emp_edit_office,
             ManagerStates.dish_name,
-            ManagerStates.dish_desc,
             ManagerStates.dish_price,
             ManagerStates.dish_id_to_delete,
         ]
@@ -301,19 +300,10 @@ async def m_dish_name(cb: types.CallbackQuery, state: FSMContext):
 
 
 @router.message(ManagerStates.dish_name)
-async def m_dish_desc(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        return await m_cancel_reply(message, state)
-    await state.update_data(dish_name=message.text)
-    await message.answer("Введите описание блюда:", reply_markup=kb_cancel())
-    await state.set_state(ManagerStates.dish_desc)
-
-
-@router.message(ManagerStates.dish_desc)
 async def m_dish_price(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         return await m_cancel_reply(message, state)
-    await state.update_data(dish_desc=message.text)
+    await state.update_data(dish_name=message.text)
     await message.answer("Введите цену блюда (число):", reply_markup=kb_cancel())
     await state.set_state(ManagerStates.dish_price)
 
@@ -332,7 +322,7 @@ async def m_dish_save(message: types.Message, state: FSMContext):
             MenuItem(
                 restaurant_id=data["target_rest_id"],
                 name=data["dish_name"],
-                description=data["dish_desc"],
+                description=None,
                 price=int(message.text),
             )
         )
