@@ -29,3 +29,4 @@ class OrderStates(StatesGroup):
     choose_date = State()
     choose_rest = State()
     choose_dish = State()
+    checkout = State()
