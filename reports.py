@@ -9,13 +9,13 @@ from sqlalchemy import select, text
 from db import User, engine, get_session
 
 
-async def send_daily_reports(bot: Bot):
+async def send_reports_for_date(bot: Bot, target_date: str | None = None):
     with get_session() as session:
         admins = session.scalars(select(User.tg_id).where(User.role == "manager", User.tg_id.is_not(None))).all()
         if not admins:
             return
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    target_date = target_date or datetime.now().strftime("%Y-%m-%d")
     df = pd.read_sql_query(
         text(
             '''SELECT r.name as Ресторан,
@@ -26,27 +26,31 @@ async def send_daily_reports(bot: Bot):
                FROM orders o
                JOIN users u ON o.user_id = u.id
                JOIN restaurants r ON o.restaurant_id = r.id
-               WHERE o.order_date = :today'''
+               WHERE o.order_date = :target'''
         ),
         engine,
-        params={"today": today},
+        params={"target": target_date},
     )
 
     if df.empty:
         for admin in admins:
-            await bot.send_message(admin, f"📅 Отчет за {today}: Заказов нет.")
+            await bot.send_message(admin, f"📅 Отчет за {target_date}: Заказов нет.")
         return
 
     df = df.sort_values(["Ресторан", "ФИО"])
     totals = df.groupby("Ресторан")["Сумма"].sum()
 
-    filename = f"Заказы_{today}.xlsx"
+    filename = f"Заказы_{target_date}.xlsx"
     df.to_excel(filename, index=False)
 
     totals_txt = "\n".join([f"- {rest}: {int(amount)} руб." for rest, amount in totals.items()])
-    caption = f"📄 Заказы на {today}.\nСумма по заведениям:\n{totals_txt}"
+    caption = f"📄 Заказы на {target_date}.\nСумма по заведениям:\n{totals_txt}"
 
     for admin in admins:
         file = FSInputFile(filename)
         await bot.send_document(admin, file, caption=caption, parse_mode="Markdown")
     os.remove(filename)
+
+
+async def send_daily_reports(bot: Bot):
+    await send_reports_for_date(bot)
