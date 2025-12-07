@@ -176,6 +176,7 @@ async def e_menu_actions(cb: types.CallbackQuery, state: FSMContext):
         await render_menu(cb.message, data["rest_id"], state)
         await cb.answer("Корзина очищена")
     elif action == "back":
+        await state.update_data(cart=[], cart_total=0, rest_id=None)
         with get_session() as session:
             rests = session.execute(select(Restaurant.id, Restaurant.name)).all()
         kb = InlineKeyboardMarkup(
