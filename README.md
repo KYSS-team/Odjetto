@@ -22,11 +22,11 @@
    ```bash
    pip install -r requirements.txt
    ```
-2. Определите переменные в `config.py`:
-   - `BOT_TOKEN` — токен Telegram-бота.
+2. Создайте файл `.env` (можно скопировать из `.env.example`) и укажите значения:
+   - `BOT_TOKEN` — токен Telegram-бота (обязателен).
    - `ADMIN_PASSWORD` — пароль менеджера (по умолчанию `admin`).
-   - `REPORT_TIME` — время отправки отчётов (`datetime.time`).
-   - `DB_NAME` и `DEFAULT_LIMIT` при необходимости.
+   - `REPORT_HOUR` и `REPORT_MINUTE` — время отправки отчётов.
+   - `DB_NAME`, `DEFAULT_LIMIT` и `ORDER_DEADLINE_HOUR` при необходимости.
 3. Запустите бота:
    ```bash
    python main.py
@@ -47,3 +47,5 @@
 3. Добавьте рестораны и блюда через «Меню/рестораны».
 4. Сотрудники активируют бот по выданному коду, выбирают дату/ресторан и оформляют заказ.
 5. В установленное время менеджер получает XLS-отчёты по каждому ресторану.
+
+Ссылка на бота: https://t.me/odjetto_lunch_bot

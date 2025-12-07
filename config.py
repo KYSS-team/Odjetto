@@ -1,7 +1,14 @@
 import os
 from datetime import time
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8568838231:AAGKoCcI7HbuifkKdhwroizMlDhRe1bGbW0")
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN is not set. Please define it in your .env file or environment variables.")
+
 DB_NAME = os.getenv("DB_NAME", "lunch_mvp.db")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 DEFAULT_LIMIT = int(os.getenv("DEFAULT_LIMIT", 400))

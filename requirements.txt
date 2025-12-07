@@ -4,3 +4,4 @@ pandas
 openpyxl
 apscheduler
 SQLAlchemy
+python-dotenv
