@@ -12,6 +12,15 @@ from utils import generate_token
 router = Router()
 
 
+def _rest_control_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Новый ресторан", callback_data="new_rest")],
+            [InlineKeyboardButton(text="🔍 Список/Редактировать", callback_data="list_rest")],
+        ]
+    )
+
+
 @router.callback_query(F.data == "cancel_action")
 async def cancel_action(cb: types.CallbackQuery, state: FSMContext):
     await state.clear()
@@ -216,12 +225,7 @@ async def m_emp_delete_execute(cb: types.CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "🥗 Управление меню")
 async def m_rest_menu(message: types.Message):
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Новый ресторан", callback_data="new_rest")],
-            [InlineKeyboardButton(text="🔍 Список/Редактировать", callback_data="list_rest")],
-        ]
-    )
+    kb = _rest_control_keyboard()
     await message.answer("Управление ресторанами и меню:", reply_markup=kb)
 
 
@@ -257,11 +261,23 @@ async def m_list_rest(cb: types.CallbackQuery, state: FSMContext):
         return
 
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=r.name, callback_data=f"rest_edit_{r.id}")] for r in rests]
+        inline_keyboard=
+        [
+            [InlineKeyboardButton(text=r.name, callback_data=f"rest_edit_{r.id}")] for r in rests
+        ]
+        + [[InlineKeyboardButton(text="🔙 Назад", callback_data="rest_menu_back")]]
     )
     await cb.message.edit_text("Выберите ресторан для редактирования:", reply_markup=kb)
     await state.set_state(ManagerStates.rest_action_select)
     await state.update_data(rest_keyboard_message=cb.message.message_id)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "rest_menu_back")
+async def m_rest_menu_back(cb: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    kb = _rest_control_keyboard()
+    await cb.message.edit_text("Управление ресторанами и меню:", reply_markup=kb)
     await cb.answer()
 
 
