@@ -29,9 +29,18 @@
    - `DB_NAME`, `DEFAULT_LIMIT` и `ORDER_DEADLINE_HOUR` при необходимости.
 3. Запустите бота:
    ```bash
+   docker-compose up -d
+   ```
+   или
+   ```bash
+   pip install -r requirements.txt
    python main.py
    ```
    При первом запуске автоматически создаётся база данных и устанавливается базовый дневной лимит.
+4. Просмотр логов:
+   ```bash
+   docker-compose logs -f
+   ```
 
 ## Основные файлы
 - `main.py` — точка входа: инициализация БД, запуск диспетчера и планировщика отчётов.
